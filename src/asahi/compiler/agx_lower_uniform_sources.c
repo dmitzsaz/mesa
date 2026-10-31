@@ -331,6 +331,31 @@ agx3_lower_m5_modified_fma_immediates(agx_context *ctx, agx_instr *I)
    }
 }
 
+/* M5 encodes a half add or FMA with a minifloat operand only unsaturated; the
+ * saturating f16add/f16fma forms take registers. Materialize the literal as an
+ * exact half so the rounding and clamp stay in a single instruction,
+ * including hadd.sat with a negative-zero minifloat operand. */
+static void
+agx3_lower_m5_saturated_half_immediates(agx_context *ctx, agx_instr *I)
+{
+   if (ctx->key->dev.encoding != AGX_ISA_ENCODING_AGX3C || !I->saturate ||
+       (I->op != AGX_OPCODE_HADD && I->op != AGX_OPCODE_HFMA))
+      return;
+
+   agx_builder b = agx_init_builder(ctx, agx_before_instr(I));
+   agx_foreach_src(I, s) {
+      const agx_index literal = I->src[s];
+      if (literal.type != AGX_INDEX_IMMEDIATE)
+         continue;
+
+      agx_index value = agx_mov_imm(
+         &b, 16, _mesa_float_to_half(agx_minifloat_decode(literal.value)));
+      value.abs = literal.abs;
+      value.neg = literal.neg;
+      I->src[s] = value;
+   }
+}
+
 /* The direct M5 scalar LOD publisher consumes its half-float source.
  * Final physical divergence disables discard hints, and post-optimizer SSA
  * reuse may differ from the original NIR use count. Pack only those operands
@@ -680,6 +705,7 @@ agx_lower_uniform_sources(agx_context *ctx)
 {
    agx_foreach_instr_global_safe(ctx, I) {
       agx3_lower_m5_modified_fma_immediates(ctx, I);
+      agx3_lower_m5_saturated_half_immediates(ctx, I);
 
       if (ctx->key->dev.encoding == AGX_ISA_ENCODING_AGX3B)
          I = agx3_move_uniform_negation(ctx, I);
