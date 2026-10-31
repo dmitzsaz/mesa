@@ -203,7 +203,10 @@ agx_write_registers(const agx_context *ctx, const agx_instr *I, unsigned d)
    case AGX_OPCODE_LOCAL_LOAD:
    case AGX_OPCODE_STACK_LOAD:
    case AGX_OPCODE_LD_TILE:
-      if (I->op == AGX_OPCODE_LOCAL_LOAD && I->memory_is_packed) {
+      /* AGX3C byte vectors in threadgroup or stack memory travel packed, two
+       * channels to a 16-bit register (agx_emit_load_scratch). */
+      if ((I->op == AGX_OPCODE_LOCAL_LOAD || I->op == AGX_OPCODE_STACK_LOAD) &&
+          I->memory_is_packed) {
          assert(agx_isa_is_agx3(ctx->key->dev.encoding));
          assert(I->format == AGX_FORMAT_I8 && I->dest[d].size == AGX_SIZE_16);
          return DIV_ROUND_UP(util_bitcount(I->mask), 2);
@@ -383,7 +386,8 @@ agx_read_registers(const agx_context *ctx, const agx_instr *I, unsigned s)
       /* See agx_write_registers */
       if (s == 0) {
          if ((I->op == AGX_OPCODE_DEVICE_STORE ||
-              I->op == AGX_OPCODE_LOCAL_STORE) && I->memory_is_packed) {
+              I->op == AGX_OPCODE_LOCAL_STORE ||
+              I->op == AGX_OPCODE_STACK_STORE) && I->memory_is_packed) {
             assert(agx_isa_is_agx3(ctx->key->dev.encoding));
             assert(I->format == AGX_FORMAT_I8);
             return DIV_ROUND_UP(util_bitcount(I->mask), 2);
@@ -452,6 +456,16 @@ agx_read_registers(const agx_context *ctx, const agx_instr *I, unsigned s)
              I->lod_mode == AGX_LOD_MODE_LOD_MIN &&
              I->src[s].type != AGX_INDEX_IMMEDIATE)
              return 2;
+
+         /* G17G texel fetches keep the full uint LOD that
+          * agx_nir_lower_texture restores for generation 10; the packer
+          * stages a 32-bit or a 16-bit register level. */
+         if ((I->op == AGX_OPCODE_TEXTURE_LOAD ||
+              I->op == AGX_OPCODE_IMAGE_LOAD) &&
+             ctx->key->dev.encoding == AGX_ISA_ENCODING_AGX3C &&
+             I->lod_mode == AGX_LOD_MODE_LOD_MIN &&
+             I->src[s].type != AGX_INDEX_IMMEDIATE)
+             return agx_index_size_16(I->src[s]);
 
          if (I->lod_mode == AGX_LOD_MODE_LOD_GRAD ||
              I->lod_mode == AGX_LOD_MODE_LOD_GRAD_MIN) {
