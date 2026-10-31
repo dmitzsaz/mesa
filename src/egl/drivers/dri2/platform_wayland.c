@@ -2711,6 +2711,27 @@ dri2_initialize_wayland_drm(_EGLDisplay *disp)
    if (!dri2_initialize_wayland_drm_extensions(dri2_dpy))
       goto cleanup;
 
+   /* A compositor scanning out on a display-only device (simpledrm) can name
+    * that device as its dma-buf main device although it has no render node.
+    * Fall back to the first device that has one.
+    */
+   if (dri2_dpy->fd_render_gpu == -1) {
+      drmDevicePtr devices[16];
+      int count = drmGetDevices2(0, devices, ARRAY_SIZE(devices));
+      for (int i = 0; i < count && dri2_dpy->fd_render_gpu == -1; i++) {
+         if (!(devices[i]->available_nodes & (1 << DRM_NODE_RENDER)))
+            continue;
+         int fd = loader_open_device(devices[i]->nodes[DRM_NODE_RENDER]);
+         if (fd < 0)
+            continue;
+         free(dri2_dpy->device_name);
+         dri2_dpy->device_name = strdup(devices[i]->nodes[DRM_NODE_RENDER]);
+         dri2_dpy->fd_render_gpu = fd;
+      }
+      if (count > 0)
+         drmFreeDevices(devices, count);
+   }
+
    loader_get_user_preferred_fd(&dri2_dpy->fd_render_gpu,
                                 &dri2_dpy->fd_display_gpu);
 
