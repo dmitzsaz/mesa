@@ -1170,7 +1170,8 @@ agx_emit_zs_word_agx3(agx_builder *b, nir_intrinsic_instr *instr,
          /* Native G17G [[stencil]] and depth+stencil exports put the
           * target mask above the S8 reference: constant 7 stages 0xff07
           * in the high half, while coverage occupies the low half. */
-         s = agx_or(b, s, agx_mov_imm(b, 16, 0xff00));
+         /* ALU immediates are 8-bit: materialize the mask at the width of s. */
+         s = agx_or(b, s, agx_mov_imm(b, s.size == AGX_SIZE_32 ? 32 : 16, 0xff00));
       }
       agx_emit_collect_to(b, word, 2, (agx_index[]){coverage, s});
    } else if (b->shader->key->dev.encoding == AGX_ISA_ENCODING_AGX3C) {
@@ -7903,6 +7904,9 @@ agx_nir_preserve_position_order(nir_shader *nir)
    }
    util_dynarray_fini(&state.todo);
    _mesa_set_destroy(state.seen, NULL);
+   /* Only ALU math-control flags change; the CFG, SSA and every analysis stay valid. */
+   nir_foreach_function_impl(impl, nir)
+      nir_progress(progress, impl, nir_metadata_all);
    return progress;
 }
 
