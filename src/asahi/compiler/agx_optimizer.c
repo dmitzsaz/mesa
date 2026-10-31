@@ -607,6 +607,29 @@ agx_optimizer_fmov_rev(agx_context *ctx, agx_instr *I, agx_instr *use)
       }
    }
 
+   /* M5 (AGX3C) rounding, log2/exp2, rsqrt and derivatives cannot write a
+    * half result from a full-width source. Keep the explicit narrowing move
+    * after them instead of folding f2f16 into an unencodable instruction. */
+   if (ctx->key && ctx->key->dev.encoding == AGX_ISA_ENCODING_AGX3C &&
+       I->dest[0].size == AGX_SIZE_32 && use->dest[0].size == AGX_SIZE_16) {
+      switch (I->op) {
+      case AGX_OPCODE_FLOOR:
+      case AGX_OPCODE_CEIL:
+      case AGX_OPCODE_TRUNC:
+      case AGX_OPCODE_ROUNDEVEN:
+      case AGX_OPCODE_LOG2:
+      case AGX_OPCODE_EXP2:
+      case AGX_OPCODE_RSQRT:
+      case AGX_OPCODE_SRSQRT:
+      case AGX_OPCODE_DFDX:
+      case AGX_OPCODE_DFDY:
+      case AGX_OPCODE_SINC_AGX3:
+         return false;
+      default:
+         break;
+      }
+   }
+
    /* ...and that narrowing FMUL takes plain registers only: a multiply that
     * already carries |x| or -x on a source keeps its explicit f32-to-f16
     * move (Skia's conic/quad edge shaders narrow abs(f) * rsqrt(g)). */
