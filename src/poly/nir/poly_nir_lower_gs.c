@@ -390,6 +390,63 @@ lower_gs_inputs(nir_builder *b, nir_intrinsic_instr *intr, void *_)
 }
 
 /*
+ * After tessellation, gl_PrimitiveIDIn is the patch ID the evaluation shader
+ * saw. The compute evaluation shader stores it in the PRIMITIVE_ID slot of its
+ * vertex outputs (poly_nir_lower_tes), which no vertex shader writes; read it
+ * from the first input vertex when the producer wrote that slot, else keep the
+ * input primitive index. Must run before lower_gs_inputs.
+ */
+static void
+lower_gs_patch_primitive_id(nir_shader *gs)
+{
+   nir_function_impl *impl = nir_shader_get_entrypoint(gs);
+   unsigned count = 0;
+
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type == nir_instr_type_intrinsic &&
+             nir_instr_as_intrinsic(instr)->intrinsic ==
+                nir_intrinsic_load_primitive_id)
+            count++;
+      }
+   }
+
+   if (count == 0)
+      return;
+
+   nir_intrinsic_instr **loads = ralloc_array(gs, nir_intrinsic_instr *, count);
+   unsigned n = 0;
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type == nir_instr_type_intrinsic &&
+             nir_instr_as_intrinsic(instr)->intrinsic ==
+                nir_intrinsic_load_primitive_id)
+            loads[n++] = nir_instr_as_intrinsic(instr);
+      }
+   }
+
+   nir_builder b = nir_builder_at(nir_before_impl(impl));
+   nir_def *index = nir_load_primitive_id(&b);
+   nir_def *outputs = poly_vertex_outputs(&b, nir_load_vertex_param_buffer_poly(&b));
+
+   nir_push_if(&b, nir_ine_imm(&b, nir_iand_imm(&b, outputs,
+                                               VARYING_BIT_PRIMITIVE_ID), 0));
+   nir_def *patch = nir_load_per_vertex_input(
+      &b, 1, 32, nir_imm_int(&b, 0), nir_imm_int(&b, 0),
+      .dest_type = nir_type_uint32,
+      .io_semantics.location = VARYING_SLOT_PRIMITIVE_ID,
+      .io_semantics.num_slots = 1);
+   nir_pop_if(&b, NULL);
+   nir_def *id = nir_if_phi(&b, patch, index);
+
+   for (unsigned i = 0; i < count; ++i)
+      nir_def_replace(&loads[i]->def, id);
+
+   ralloc_free(loads);
+   nir_progress(true, impl, nir_metadata_none);
+}
+
+/*
  * Unrolled ID is the index of the primitive in the count buffer, given as
  * (instance ID * # vertices/instance) + vertex ID
  */
@@ -1333,6 +1390,8 @@ poly_nir_lower_gs_with_options(nir_shader *gs, nir_shader **gs_count,
       nir_shader_intrinsics_pass(gs, rewrite_invocation_id,
                                  nir_metadata_control_flow, nir_imm_int(&b, 0));
    }
+
+   lower_gs_patch_primitive_id(gs);
 
    NIR_PASS(_, gs, nir_shader_intrinsics_pass, lower_gs_inputs,
             nir_metadata_control_flow, NULL);
