@@ -2171,23 +2171,50 @@ default_dmabuf_feedback_main_device(
    struct wl_array *device)
 {
    struct dri2_egl_display *dri2_dpy = data;
-   char *node;
-   int fd;
    dev_t dev;
+   drmDevicePtr device_info;
+   char *node = NULL;
+   int display_fd = -1;
+   int fd = -1;
 
-   /* Given the device, look for a render node and try to open it. */
-   memcpy(&dev, device->data, sizeof(dev));
-   node = loader_get_render_node(dev);
-   if (!node)
+   /* Feedback can be re-sent after initialization. Keep the selected device
+    * and its display/render fd pair for this EGLDisplay's lifetime. */
+   if (dri2_dpy->fd_render_gpu >= 0 || device->size != sizeof(dev))
       return;
-   fd = loader_open_device(node);
-   if (fd == -1) {
+   memcpy(&dev, device->data, sizeof(dev));
+   if (drmGetDeviceFromDevId(dev, 0, &device_info) < 0)
+      return;
+
+   if (device_info->available_nodes & (1 << DRM_NODE_RENDER)) {
+      node = strdup(device_info->nodes[DRM_NODE_RENDER]);
+      if (node)
+         fd = loader_open_device(node);
+   } else if (device_info->available_nodes & (1 << DRM_NODE_PRIMARY)) {
+      /* A platform display controller may import buffers from a separate GPU.
+       * Use the same compatibility policy as the DRM platform, rather than
+       * selecting an unrelated render node from the device list.
+       */
+      display_fd = loader_open_device(device_info->nodes[DRM_NODE_PRIMARY]);
+      if (display_fd >= 0)
+         fd = dri_query_compatible_render_only_device_fd(display_fd);
+      if (fd >= 0)
+         node = loader_get_device_name_for_fd(fd);
+   }
+   drmFreeDevice(&device_info);
+
+   if (fd < 0 || !node) {
+      if (fd >= 0)
+         close(fd);
+      if (display_fd >= 0)
+         close(display_fd);
       free(node);
       return;
    }
 
+   free(dri2_dpy->device_name);
    dri2_dpy->device_name = node;
    dri2_dpy->fd_render_gpu = fd;
+   dri2_dpy->fd_display_gpu = display_fd;
 #ifdef HAVE_BIND_WL_DISPLAY
    dri2_dpy->authenticated = true;
 #endif
@@ -2668,7 +2695,7 @@ dri2_initialize_wayland_drm_extensions(struct dri2_egl_display *dri2_dpy)
          return false;
    }
 #endif
-   return true;
+   return dri2_dpy->fd_render_gpu >= 0;
 }
 
 static EGLBoolean
@@ -2711,8 +2738,12 @@ dri2_initialize_wayland_drm(_EGLDisplay *disp)
    if (!dri2_initialize_wayland_drm_extensions(dri2_dpy))
       goto cleanup;
 
-   loader_get_user_preferred_fd(&dri2_dpy->fd_render_gpu,
-                                &dri2_dpy->fd_display_gpu);
+   int original_fd;
+   loader_get_user_preferred_fd(&dri2_dpy->fd_render_gpu, &original_fd);
+   if (dri2_dpy->fd_display_gpu == -1)
+      dri2_dpy->fd_display_gpu = original_fd;
+   else if (original_fd != dri2_dpy->fd_render_gpu)
+      close(original_fd);
 
    if (dri2_dpy->fd_render_gpu != dri2_dpy->fd_display_gpu) {
       free(dri2_dpy->device_name);
