@@ -2403,9 +2403,11 @@ hk_GetPhysicalDeviceQueueFamilyProperties2(
          if (prio) {
             STATIC_ASSERT(ARRAY_SIZE(hk_global_queue_priorities) <=
                           VK_MAX_GLOBAL_PRIORITY_SIZE_KHR);
-            prio->priorityCount = ARRAY_SIZE(hk_global_queue_priorities);
+            /* HAL300 currently admits only its unprivileged profile. */
+            prio->priorityCount = agx_chip_g17_m5(pdev->dev.chip)
+                                    ? 2 : ARRAY_SIZE(hk_global_queue_priorities);
             memcpy(&prio->priorities, hk_global_queue_priorities,
-                   sizeof(hk_global_queue_priorities));
+                   prio->priorityCount * sizeof(hk_global_queue_priorities[0]));
          }
       }
    }

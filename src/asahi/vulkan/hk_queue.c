@@ -1757,18 +1757,14 @@ hk_queue_init(struct hk_device *dev, const VkDeviceQueueCreateInfo *pCreateInfo,
       priority_info ? priority_info->globalPriority
                     : VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR;
 
-   /* On M5, quantize relative priorities to the two unprivileged firmware
-    * classes. An explicit global class takes precedence; the kernel checks
-    * permission for elevated classes. No scheduling work is needed during
-    * submission. Elsewhere high-priority scheduling still needs kernel
-    * qualification.
-    */
+   /* LOW remains a scheduling hint on HAL300: the kernel may promote it to
+    * MEDIUM. Explicit elevated classes have no supported firmware profile. */
    enum drm_asahi_priority drm_priority = translate_priority(priority);
-   if (agx_chip_g17_m5(dev->dev.chip)) {
-      if (!priority_info &&
-          pCreateInfo->pQueuePriorities[index_in_family] < 0.5f)
-         drm_priority = DRM_ASAHI_PRIORITY_LOW;
-   } else if (drm_priority >= DRM_ASAHI_PRIORITY_HIGH) {
+   if (agx_chip_g17_m5(dev->dev.chip) && !priority_info &&
+       pCreateInfo->pQueuePriorities[index_in_family] < 0.5f)
+      drm_priority = DRM_ASAHI_PRIORITY_LOW;
+
+   if (drm_priority >= DRM_ASAHI_PRIORITY_HIGH) {
       vk_free(&dev->vk.alloc, queue);
       return VK_ERROR_NOT_PERMITTED_EXT;
    }
