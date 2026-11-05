@@ -1171,7 +1171,7 @@ agx_emit_zs_word_agx3(agx_builder *b, nir_intrinsic_instr *instr,
          /* Native G17G [[stencil]] and depth+stencil exports put the
           * target mask above the S8 reference: constant 7 stages 0xff07
           * in the high half, while coverage occupies the low half. */
-         s = agx_or(b, s, agx_mov_imm(b, 16, 0xff00));
+         s = agx_or(b, s, agx_mov_imm(b, agx_size_align_16(s.size) * 16, 0xff00));
       }
       agx_emit_collect_to(b, word, 2, (agx_index[]){coverage, s});
    } else if (b->shader->key->dev.encoding == AGX_ISA_ENCODING_AGX3C) {
