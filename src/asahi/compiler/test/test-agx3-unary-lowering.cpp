@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include "agx_builder.h"
 #include "agx_test.h"
+#include "util/half_float.h"
 
 /* Refused shape: roundeven d32 <- s16. Copy propagation folds a widening
  * source move into the rounding instruction, but G17P's rounding forms have
@@ -54,4 +55,59 @@ TEST(AGX3UnaryLowering, PreservesMatchedWidthsAndOtherGenerations)
       }
    }
    ralloc_free(mem);
+}
+
+TEST(AGX3UnaryLowering, M5KeepsNarrowingAfterFullUnary)
+{
+   for (auto op : {AGX_OPCODE_FLOOR, AGX_OPCODE_CEIL, AGX_OPCODE_TRUNC,
+                   AGX_OPCODE_ROUNDEVEN, AGX_OPCODE_LOG2, AGX_OPCODE_EXP2,
+                   AGX_OPCODE_RSQRT, AGX_OPCODE_SRSQRT, AGX_OPCODE_DFDX,
+                   AGX_OPCODE_DFDY, AGX_OPCODE_SINC_AGX3}) {
+      for (auto size : {AGX_SIZE_16, AGX_SIZE_32}) {
+         void *mem = ralloc_context(nullptr);
+         agx_builder *b = agx_test_builder(mem);
+         agx_shader_key key = {};
+         key.dev.encoding = AGX_ISA_ENCODING_AGX3C;
+         b->shader->key = &key;
+         agx_index input = agx_preload(b, agx_register(0, size));
+         agx_instr *I = agx_alloc_instr(b, op, 1, 1);
+         I->src[0] = input;
+         I->dest[0] = agx_temp(b->shader, size);
+         agx_builder_insert(&b->cursor, I);
+         agx_index result = agx_temp(b->shader, AGX_SIZE_16);
+         agx_fmov_to(b, result, I->dest[0]);
+         agx_unit_test(b, result);
+         agx_optimizer_backward(b->shader);
+         EXPECT_EQ(I->dest[0].size, size) << op;
+         ralloc_free(mem);
+      }
+   }
+}
+
+TEST(AGX3UnaryLowering, M5SaturatedHalfImmediates)
+{
+   for (auto op : {AGX_OPCODE_HADD, AGX_OPCODE_HFMA}) {
+      for (unsigned literal : {0u, 0x80u, 0x38u}) {
+         void *mem = ralloc_context(nullptr);
+         agx_builder *b = agx_test_builder(mem);
+         agx_shader_key key = {};
+         key.dev.encoding = AGX_ISA_ENCODING_AGX3C;
+         b->shader->key = &key;
+         agx_instr *I = agx_alloc_instr(b, op, 1, op == AGX_OPCODE_HFMA ? 3 : 2);
+         I->dest[0] = agx_temp(b->shader, AGX_SIZE_16);
+         for (unsigned s = 0; s < I->nr_srcs; ++s)
+            I->src[s] = agx_temp(b->shader, AGX_SIZE_16);
+         I->src[1] = agx_immediate(literal);
+         I->saturate = true;
+         agx_builder_insert(&b->cursor, I);
+         agx_lower_uniform_sources(b->shader);
+         EXPECT_TRUE(I->saturate);
+         EXPECT_EQ(I->src[1].size, AGX_SIZE_16);
+         EXPECT_EQ(I->src[1].type, AGX_INDEX_NORMAL);
+         agx_instr *move = list_entry(I->link.prev, agx_instr, link);
+         EXPECT_EQ(move->op, AGX_OPCODE_MOV_IMM);
+         EXPECT_EQ(move->imm, _mesa_float_to_half(agx_minifloat_decode(literal)));
+         ralloc_free(mem);
+      }
+   }
 }

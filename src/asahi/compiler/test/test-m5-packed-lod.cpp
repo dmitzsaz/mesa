@@ -178,3 +178,26 @@ TEST(M5PackedLOD, Bank8MinimumOwnsCompleteStagingRange)
    }
 
 }
+
+#ifndef NDEBUG
+TEST(M5PackedLOD, TexelLODRegisterFootprint)
+{
+   void *mem = ralloc_context(NULL);
+   agx_builder *b = agx_test_builder(mem);
+   agx_shader_key key = {};
+   key.dev.encoding = AGX_ISA_ENCODING_AGX3C;
+   b->shader->key = &key;
+   for (auto op : {AGX_OPCODE_TEXTURE_LOAD, AGX_OPCODE_IMAGE_LOAD}) {
+      agx_instr *I = agx_alloc_instr(b, op, 1, 2);
+      I->lod_mode = AGX_LOD_MODE_LOD_MIN;
+      for (auto size : {AGX_SIZE_16, AGX_SIZE_32}) {
+         I->src[1] = agx_register(4, size);
+         EXPECT_EQ(agx_read_registers(b->shader, I, 1),
+                   size == AGX_SIZE_32 ? 2u : 1u);
+      }
+      I->src[1] = agx_immediate(0);
+      EXPECT_EQ(agx_read_registers(b->shader, I, 1), 1u);
+   }
+   ralloc_free(mem);
+}
+#endif

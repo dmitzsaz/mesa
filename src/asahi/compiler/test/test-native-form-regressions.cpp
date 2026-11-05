@@ -6080,3 +6080,32 @@ TEST(NativeForms, SignExtendSignedConsumersStillFold)
       ralloc_free(mem);
    }
 }
+
+TEST(NativeForms, M5StencilMaskMatchesReferenceWidth)
+{
+   for (unsigned input_bits : {16u, 32u}) {
+      for (unsigned aspects : {2u, 3u}) {
+         nir_builder b = nir_builder_init_simple_shader(
+            MESA_SHADER_FRAGMENT, &agx_nir_options, "M5 stencil target mask");
+         nir_def *reference = agx_test_load_preamble(&b, 1, input_bits, 4);
+         nir_store_zs_agx(&b, nir_imm_intN_t(&b, 0xff, 16),
+                          nir_imm_float(&b, 0.5f), nir_u2u16(&b, reference),
+                          .base = aspects);
+         b.shader->info.outputs_written = BITFIELD64_BIT(FRAG_RESULT_STENCIL);
+         if (aspects & 1)
+            b.shader->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_DEPTH);
+         agx_shader_key key = {};
+         key.dev.encoding = AGX_ISA_ENCODING_AGX3C;
+         key.dev.chip = AGX_CHIP_G17S;
+         key.no_preamble = true;
+         key.reserved_preamble = 16;
+         key.fs.nr_samples = 1;
+         agx_preprocess_nir(b.shader);
+         agx_shader_part part = {};
+         EXPECT_TRUE(agx_compile_shader_nir(b.shader, &key, &part))
+            << agx_last_compile_refusal();
+         free(part.binary);
+         ralloc_free(b.shader);
+      }
+   }
+}

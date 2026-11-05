@@ -348,3 +348,23 @@ TEST_F(M5SpillConstantPhi, G17PAndConstantProgramsRemainUnchanged)
    EXPECT_FALSE(agx_fold_m5_spill_constant_phis(b->shader));
    EXPECT_EQ(definition(out)->op, AGX_OPCODE_PHI);
 }
+
+#ifndef NDEBUG
+TEST_F(LowerSpill, PackedByteStackFootprint)
+{
+   agx_shader_key key = {};
+   key.dev.encoding = AGX_ISA_ENCODING_AGX3C;
+   agx_builder *b = agx_test_builder(mem_ctx);
+   b->shader->key = &key;
+   for (unsigned mask : {1u, 3u, 7u, 15u, 5u}) {
+      agx_instr *load = agx_stack_load_to(b, hy, agx_immediate(0),
+                                         AGX_FORMAT_I8, mask);
+      agx_instr *store = agx_stack_store(b, hy, agx_immediate(0),
+                                        AGX_FORMAT_I8, mask);
+      load->memory_is_packed = store->memory_is_packed = true;
+      unsigned halves = DIV_ROUND_UP(util_bitcount(mask), 2);
+      EXPECT_EQ(agx_write_registers(b->shader, load, 0), halves);
+      EXPECT_EQ(agx_read_registers(b->shader, store, 0), halves);
+   }
+}
+#endif

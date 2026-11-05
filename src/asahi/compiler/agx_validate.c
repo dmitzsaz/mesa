@@ -156,7 +156,7 @@ agx_validate_defs(agx_instr *I, BITSET_WORD *defs)
 }
 
 /** Returns number of registers written by an instruction */
-static unsigned
+unsigned
 agx_write_registers(const agx_context *ctx, const agx_instr *I, unsigned d)
 {
    unsigned size = agx_size_align_16(I->dest[d].size);
@@ -298,7 +298,7 @@ agx_coordinate_registers(const agx_instr *I, enum agx_size size)
    return agx_size_align_16(size) * (dim.comps + (has_array && dim.array));
 }
 
-static unsigned
+unsigned
 agx_read_registers(const agx_context *ctx, const agx_instr *I, unsigned s)
 {
    unsigned size = agx_size_align_16(I->src[s].size);

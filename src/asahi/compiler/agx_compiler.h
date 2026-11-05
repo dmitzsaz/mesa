@@ -1304,6 +1304,10 @@ bool agx3_pack_binary(agx_context *ctx, struct util_dynarray *emission);
 const char *agx3_last_pack_refusal(void);
 
 #ifndef NDEBUG
+/* Operand footprints checked by the validator, in 16-bit register units. */
+unsigned agx_read_registers(const agx_context *ctx, const agx_instr *I, unsigned s);
+unsigned agx_write_registers(const agx_context *ctx, const agx_instr *I, unsigned d);
+
 void agx_validate(agx_context *ctx, const char *after_str);
 void agx_validate_ra(agx_context *ctx);
 #else
