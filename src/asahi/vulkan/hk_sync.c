@@ -1011,7 +1011,7 @@ hk_sync_get_cs_after(struct hk_cmd_buffer *cmd,
    return cs;
 }
 
-/* A standalone G17P timestamp still needs an executable command carrier.
+/* A standalone native timestamp still needs an executable command carrier.
  * Only an otherwise empty timestamp producer uses this owned scratch store;
  * ordinary compute and barriers keep their existing streams unchanged.
  */
@@ -1019,7 +1019,8 @@ static void
 stamp_carrier_launch(struct hk_cmd_buffer *cmd)
 {
    struct hk_cs *cs = cmd->current_cs.cs;
-   if (!agx_native_graphics(&hk_cmd_buffer_device(cmd)->dev) || !cs ||
+   struct hk_device *dev = hk_cmd_buffer_device(cmd);
+   if ((!agx_native_graphics(&dev->dev) && !agx_chip_g17_m5(dev->dev.chip)) || !cs ||
        (!cs->timestamp.start.handle && !cs->timestamp.end.handle) ||
        cs->stats.cmds || cs->stats.flushes || cs->imm_writes.size)
       return;

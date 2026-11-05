@@ -42,6 +42,8 @@ _Static_assert(offsetof(struct drm_asahi_cmd_compute_with_prior,
                         intersection_default_control) == 192,
                "compute intersection default control");
 static unsigned tests, failures;
+static bool allow_stamp_carrier;
+static unsigned stamp_carriers;
 static void *test_context;
 
 /* Fixtures need only the recorded synchronization fields, not a Vulkan device.
@@ -304,8 +306,12 @@ void
 hk_g17p_meta_fill_addr(struct hk_cmd_buffer *cmd, struct hk_cs **target,
                        uint64_t address, uint64_t size, uint32_t value)
 {
-   (void)cmd; (void)target; (void)address; (void)size; (void)value;
-   abort();
+   (void)cmd;
+   if (!allow_stamp_carrier || !target || !*target || address != 0x20000 ||
+       size != 4 || value != 0)
+      abort();
+   (*target)->stats.cmds++;
+   stamp_carriers++;
 }
 
 struct agx_ptr
@@ -313,8 +319,10 @@ hk_pool_alloc_from_slow(struct hk_cmd_buffer *cmd, struct hk_uploader *uploader,
                          uint32_t size, uint32_t alignment,
                          enum hk_cmd_bo_type type)
 {
-   (void)cmd; (void)uploader; (void)size; (void)alignment; (void)type;
-   abort();
+   (void)cmd; (void)uploader; (void)type;
+   if (!allow_stamp_carrier || size != 16 || alignment != 16)
+      abort();
+   return (struct agx_ptr){ .gpu = 0x20000 };
 }
 
 struct agx_ptr
@@ -1309,6 +1317,34 @@ test_direct_single_footprints(void)
    }
 }
 
+static void
+test_m5_timestamp_carrier(void)
+{
+   const enum agx_chip chips[] = {AGX_CHIP_G17P, AGX_CHIP_G17G, AGX_CHIP_G17S};
+   allow_stamp_carrier = true;
+   for (unsigned i = 0; i < ARRAY_SIZE(chips); ++i) {
+      struct hk_cmd_buffer *cmd = timestamp_cmd(chips[i], true);
+      struct hk_cs *cs = add(cmd, true);
+      cmd->current_cs.cs = cs;
+      unsigned before = stamp_carriers;
+      end_timestamp(cmd, 0);
+      T("empty timestamp producer dispatches one scratch store",
+        stamp_carriers == before + 1 && cs->stats.cmds == 1);
+      T("timestamp carrier closes at its timestamp boundary",
+        !cmd->current_cs.cs && cs->timestamp.end.handle);
+
+      cmd = timestamp_cmd(chips[i], true);
+      cs = add(cmd, true);
+      cmd->current_cs.cs = cs;
+      cs->stats.cmds = 1;
+      before = stamp_carriers;
+      end_timestamp(cmd, 1);
+      T("an existing dispatch already carries its timestamp",
+        stamp_carriers == before);
+   }
+   allow_stamp_carrier = false;
+}
+
 int
 main(void)
 {
@@ -1329,6 +1365,7 @@ main(void)
    test_rt_kernel_gate();
    test_timestamp_execution_scopes();
    test_timestamp_reused_compute();
+   test_m5_timestamp_carrier();
    /* Each matching destination retains the exact old source prefix, including
     * reuse of a recording and independent physical destinations on the queue. */
    struct hk_queue *q = new_queue(true);
